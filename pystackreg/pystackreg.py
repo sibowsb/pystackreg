@@ -320,7 +320,8 @@ class StackReg:
         :type img: array_like(Ni..., Nj..., Nk...)
         :param img: The 3D stack of images that should be aligned
 
-        :type reference: string, one of ['previous', 'first', 'mean']
+        :type reference: string, one of ['previous', 'first', 'mean'], or
+                         array_like(Nj..., Nk...)
         :param reference:
             *  *'previous'*: Aligns each frame (image) to its previous frame in the
                stack
@@ -329,6 +330,8 @@ class StackReg:
                mean of the first n_frames of the stack
             *  *'mean'*: Aligns each frame (image) to the average of all images in the
                stack
+            *  *array_like*: Aligns each frame (image) to this specific frame. Useful
+               when registering multiple videos collected from the same experiment.
 
         :type n_frames: int, optional
         :param n_frames: If reference is 'first', then this parameter specifies the
@@ -362,14 +365,6 @@ class StackReg:
         :return: The transformation matrix for each image in the stack
         """
 
-        if self._transformation == self.BILINEAR and reference == "previous":
-            raise Exception(
-                "Bilinear stack transformation not supported with reference "
-                '== "previous" as a combination of bilinear transformations does not '
-                "generally result in a bilinear transformation. Use another reference "
-                "or manually register/transform images to their previous image."
-            )
-
         if len(img.shape) != 3:
             raise Exception("Stack must have three dimensions")
 
@@ -398,15 +393,30 @@ class StackReg:
             np.identity(tmatdim).reshape((1, tmatdim, tmatdim)), img.shape[axis], axis=0
         ).astype(np.double)
 
-        if reference == "first":
-            ref = np.mean(img.take(range(n_frames), axis=axis), axis=axis)
-        elif reference == "mean":
-            ref = img.mean(axis=0)
-            idx_start = 0
-        elif reference == "previous":
-            pass
+        if isinstance(reference, np.ndarray):
+            if reference.ndim != 2:
+                raise ValueError('Reference frame has to be 2D')
+            ref = reference
         else:
-            raise ValueError('Unknown reference "{}"'.format(reference))
+            if reference == "first":
+                ref = np.mean(img.take(range(n_frames), axis=axis), axis=axis)
+            elif reference == "mean":
+                ref = img.mean(axis=0)
+                idx_start = 0
+            elif reference == "previous":
+                # ref to be determined as we iterate
+
+                if self._transformation == self.BILINEAR:
+                    raise Exception(
+                        "Bilinear stack transformation not supported with reference "
+                        '== "previous" as a combination of bilinear transformations '
+                        "does not generally result in a bilinear transformation. "
+                        "Use another reference or manually register/transform images "
+                        "to their previous image."
+                    )
+        
+            else:
+                raise ValueError('Unknown reference "{}"'.format(reference))
 
         iterable = range(idx_start, img.shape[axis])
 
@@ -418,12 +428,12 @@ class StackReg:
             slc = [slice(None)] * len(img.shape)
             slc[axis] = i
 
-            if reference == "previous":
+            if isinstance(reference, str) and reference == "previous":
                 ref = img.take(i - 1, axis=axis)
 
             self._tmats[i, :, :] = self.register(ref, simple_slice(img, i, axis))
 
-            if reference == "previous" and i > 0:
+            if isinstance(reference, str) and reference == "previous" and i > 0:
                 self._tmats[i, :, :] = np.matmul(
                     self._tmats[i, :, :], self._tmats[i - 1, :, :]
                 )
@@ -490,15 +500,18 @@ class StackReg:
         :type img: array_like(Ni..., Nj..., Nk...)
         :param img: The 3D stack of images that should be aligned
 
-        :type reference: string, one of ['previous', 'first', 'mean']
+        :type reference: string, one of ['previous', 'first', 'mean'], or
+                         array_like(Nj..., Nk...)
         :param reference:
             *  *'previous'*: Aligns each frame (image) to its previous frame in the
                stack
             *  *'first:'* Aligns each frame (image) to the first frame in the stack -
-               if n_frames is > 1, then each frame is aligned to the
+               if n_frames is > 1, then each frame is  aligned to the
                mean of the first n_frames of the stack
             *  *'mean'*: Aligns each frame (image) to the average of all images in the
                stack
+            *  *array_like*: Aligns each frame (image) to this specific frame. Useful
+               when registering multiple videos collected from the same experiment.
 
         :type n_frames: int, optional
         :param n_frames: If reference is 'first', then this parameter specifies the
